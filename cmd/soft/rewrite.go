@@ -10,6 +10,7 @@ import (
 	"go/printer"
 	"go/token"
 	"io/ioutil"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -23,6 +24,9 @@ var printerCfg = &printer.Config{
 func addSoftImport(fset *token.FileSet, f *ast.File) {
 	importSpecs := []ast.Spec{
 		&ast.ImportSpec{
+			Name: &ast.Ident{
+				Name: "soft",
+			},
 			Path: &ast.BasicLit{
 				Kind:  token.STRING,
 				Value: `"github.com/YuriyNasretdinov/hotreload"`,
@@ -79,6 +83,7 @@ func funcDeclFlagName(fset *token.FileSet, d *ast.FuncDecl) string {
 	if d.Body == nil {
 		return "" // no body, so obviously cannot mock it
 	}
+
 	parts = append(parts, fset.Position(d.Body.Lbrace).String(), fset.Position(d.Body.Rbrace).String())
 	h := md5.New()
 	for _, p := range parts {
@@ -176,15 +181,20 @@ func funcDeclType(f *ast.FuncDecl) ast.Expr {
 	}
 }
 
-type funcFlags map[*ast.FuncDecl]string
+type funcMeta struct {
+	flagName string // the flag name to be used in the interceptor
+	funcName string // a unique name for the function that can be used to fully identify it
+}
+
+type funcFlags map[*ast.FuncDecl]funcMeta
 
 func addInit(hashes funcFlags, initFunc *ast.FuncDecl, fset *token.FileSet, f *ast.File) {
 	specs := &ast.ValueSpec{
 		Type: ast.NewIdent("int32"),
 	}
 
-	for decl, flagName := range hashes {
-		specs.Names = append(specs.Names, ast.NewIdent(flagName))
+	for decl, flagMeta := range hashes {
+		specs.Names = append(specs.Names, ast.NewIdent(flagMeta.flagName))
 
 		initFunc.Body.List = append(initFunc.Body.List, &ast.ExprStmt{
 			X: &ast.CallExpr{
@@ -194,9 +204,12 @@ func addInit(hashes funcFlags, initFunc *ast.FuncDecl, fset *token.FileSet, f *a
 				},
 				Args: []ast.Expr{
 					funcDeclExpr(decl),
+					&ast.BasicLit{
+						Value: fmt.Sprintf("%q", flagMeta.funcName),
+					},
 					&ast.UnaryExpr{
 						Op: token.AND,
-						X:  ast.NewIdent(flagName),
+						X:  ast.NewIdent(flagMeta.flagName),
 					},
 				},
 			},
@@ -243,7 +256,7 @@ func getInterceptorsExpression(decl *ast.FuncDecl) ast.Expr {
 }
 
 func injectInterceptors(flags funcFlags) {
-	for decl, flagName := range flags {
+	for decl, flagMeta := range flags {
 		var injectBody []ast.Stmt
 		interceptorsExpr := getInterceptorsExpression(decl)
 		if interceptorsExpr == nil {
@@ -268,7 +281,7 @@ func injectInterceptors(flags funcFlags) {
 					},
 					Args: []ast.Expr{&ast.UnaryExpr{
 						Op: token.AND,
-						X:  ast.NewIdent(flagName),
+						X:  ast.NewIdent(flagMeta.flagName),
 					}},
 				},
 				Y: &ast.BasicLit{
@@ -283,9 +296,11 @@ func injectInterceptors(flags funcFlags) {
 	}
 }
 
-func transformAst(fset *token.FileSet, f *ast.File) {
+func transformAst(filename string, fset *token.FileSet, f *ast.File) {
 	flags := make(funcFlags)
 	var initFunc *ast.FuncDecl
+
+	pkgPrefix := strings.TrimLeft(strings.TrimPrefix(filepath.Dir(filename), gopath), string(os.PathSeparator)+"src"+string(os.PathSeparator))
 
 	for _, d := range f.Decls {
 		switch d := d.(type) {
@@ -293,7 +308,25 @@ func transformAst(fset *token.FileSet, f *ast.File) {
 			if d.Name.Name == "init" && d.Recv == nil {
 				initFunc = d
 			} else if flName := funcDeclFlagName(fset, d); flName != "" {
-				flags[d] = flName
+				var funcName string
+
+				if d.Recv != nil {
+					switch l := d.Recv.List[0].Type.(type) {
+					case *ast.StarExpr:
+						funcName = "*" + l.X.(*ast.Ident).Name
+					case *ast.Ident:
+						funcName = l.Name
+					}
+
+					funcName += "." + d.Name.Name
+				} else {
+					funcName = d.Name.Name
+				}
+
+				flags[d] = funcMeta{
+					flagName: flName,
+					funcName: pkgPrefix + "/" + funcName,
+				}
 			}
 		}
 	}
@@ -342,7 +375,7 @@ func rewriteFile(filename string) (contents []byte, err error) {
 	}
 
 	cmap := ast.NewCommentMap(fset, f, f.Comments)
-	transformAst(fset, f)
+	transformAst(filename, fset, f)
 	f.Comments = cmap.Filter(f).Comments()
 
 	var b bytes.Buffer

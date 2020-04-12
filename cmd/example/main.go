@@ -1,22 +1,33 @@
 package main
 
 import (
+	"flag"
 	"fmt"
+	"log"
 	"os"
+	"plugin"
 
-	"github.com/YuriyNasretdinov/hotreload"
+	"github.com/YuriyNasretdinov/hotreload/cmd/example/fp"
 )
 
-func fpClose(f *os.File) error {
-	return f.Close()
-}
+var plugPath = flag.String("plug", "", "Path to a plugin")
 
 func main() {
-	soft.Mock(fpClose, func(f *os.File) error {
-		fmt.Printf("File is going to be closed: %s\n", f.Name())
-		res, _ := soft.CallOriginal(fpClose, f)[0].(error)
-		return res
-	})
-	fp, _ := os.Open("/dev/null")
-	fmt.Printf("Hello, world: %v!\n", fpClose(fp))
+	flag.Parse()
+
+	devNull, _ := os.Open("/dev/null")
+
+	plug, err := plugin.Open(*plugPath)
+	if err != nil {
+		log.Fatalf("Couldn't open the plugin: %v", err)
+	}
+	sym, err := plug.Lookup("Mock")
+	if err != nil {
+		log.Fatalf("Couldn't open the symbol Mock: %v", err)
+	}
+
+	log.Printf("Calling Mock() from a plugin")
+	sym.(func())()
+
+	fmt.Printf("Hello, world: %v!\n", fp.Close(devNull))
 }

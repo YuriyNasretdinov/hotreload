@@ -80,9 +80,10 @@ func sync(fi os.FileInfo, dirFrom, dirTo string) {
 
 // TODO: maybe make configurable?
 var ignoreDirs = map[string]bool{
-	".git":        true,
-	".hg":         true,
-	".unrealsync": true,
+	".git":         true,
+	".hg":          true,
+	".unrealsync":  true,
+	"node_modules": true,
 }
 
 func syncDir(dirFrom, dirTo string) {
