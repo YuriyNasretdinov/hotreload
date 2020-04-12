@@ -1,4 +1,4 @@
-package soft
+package hot
 
 import (
 	"reflect"

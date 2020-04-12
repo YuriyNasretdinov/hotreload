@@ -25,7 +25,7 @@ func addSoftImport(fset *token.FileSet, f *ast.File) {
 	importSpecs := []ast.Spec{
 		&ast.ImportSpec{
 			Name: &ast.Ident{
-				Name: "soft",
+				Name: "hot",
 			},
 			Path: &ast.BasicLit{
 				Kind:  token.STRING,
@@ -199,7 +199,7 @@ func addInit(hashes funcFlags, initFunc *ast.FuncDecl, fset *token.FileSet, f *a
 		initFunc.Body.List = append(initFunc.Body.List, &ast.ExprStmt{
 			X: &ast.CallExpr{
 				Fun: &ast.SelectorExpr{
-					X:   ast.NewIdent("soft"),
+					X:   ast.NewIdent("hot"),
 					Sel: ast.NewIdent("RegisterFunc"),
 				},
 				Args: []ast.Expr{
@@ -238,7 +238,7 @@ func getInterceptorsExpression(decl *ast.FuncDecl) ast.Expr {
 		Fun: &ast.TypeAssertExpr{
 			X: &ast.CallExpr{
 				Fun: &ast.SelectorExpr{
-					X:   ast.NewIdent("soft"),
+					X:   ast.NewIdent("hot"),
 					Sel: ast.NewIdent("GetMockFor"),
 				},
 				Args: []ast.Expr{funcDeclExpr(decl)},

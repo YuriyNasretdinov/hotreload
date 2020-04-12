@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/YuriyNasretdinov/hotreload"
+	hot "github.com/YuriyNasretdinov/hotreload"
 )
 
 func TestSoft(t *testing.T) {
@@ -21,7 +21,7 @@ func osOpen(filename string) (*os.File, error) {
 }
 
 func resetMethod(t *testing.T, all bool) {
-	soft.Mock(osOpen, func(filename string) (*os.File, error) {
+	hot.Mock(osOpen, func(filename string) (*os.File, error) {
 		return nil, errors.New("Cannot open files!")
 	})
 
@@ -30,9 +30,9 @@ func resetMethod(t *testing.T, all bool) {
 	}
 
 	if all {
-		soft.ResetAll()
+		hot.ResetAll()
 	} else {
-		soft.Reset(osOpen)
+		hot.Reset(osOpen)
 	}
 
 	if _, err := osOpen(os.DevNull); err != nil {
