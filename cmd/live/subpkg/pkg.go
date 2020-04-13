@@ -1,6 +1,7 @@
 package subpkg
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"sync"
@@ -26,7 +27,7 @@ func (e *ExampleStruct) incrementCounter(w http.ResponseWriter, r *http.Request)
 	e.Counter++
 
 	w.Write([]byte("Incremented!\n"))
-	// fmt.Fprintf(w, "Counter: %s", e.Counter)
+	// fmt.Fprintf(w, "Counter: %s\n", e.Counter)
 	// log.Printf("[Incr] Counter value: %s", e.Counter)
 }
 
@@ -40,6 +41,6 @@ func (e *ExampleStruct) GetCounter(w http.ResponseWriter, r *http.Request) {
 	e.Lock()
 	defer e.Unlock()
 
-	// fmt.Fprintf(w, "Counter: %s", e.Counter)
+	fmt.Fprintf(w, "Counter: %s\n", e.Counter)
 	// log.Printf("[Get] Counter value: %d", e.Counter)
 }

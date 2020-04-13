@@ -109,7 +109,7 @@ func callOriginal(fHash funcPtr, args []interface{}) []interface{} {
 func reset(fHash funcPtr) {
 	fl, ok := pkgFlags[fHash]
 	if !ok {
-		panic("Function is not registered")
+		return
 	}
 
 	delete(mocks, fHash)
@@ -118,8 +118,20 @@ func reset(fHash funcPtr) {
 
 // Reset removes the mock that was set up for the function f,
 // returning it to the original implementation.
+// If there were no mocks set up for the function it is a noop.
 func Reset(f interface{}) {
 	reset(getFuncPtr(f))
+}
+
+// ResetByName removes the mock that was set up for the function src,
+// returning it to the original implementation.
+// If there were no mocks set up for the function it is a noop.
+func ResetByName(src string) {
+	ptr, ok := pkgPtrs[src]
+	if !ok {
+		return
+	}
+	reset(ptr)
 }
 
 // ResetAll removes the mocks that were set up for all functions.

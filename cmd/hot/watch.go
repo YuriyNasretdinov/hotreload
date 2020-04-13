@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -130,19 +131,34 @@ func getChangedDecls(fset *token.FileSet, f *ast.File, changedLines map[int]bool
 	return changedDecls, nil
 }
 
-func rewriteFuncDecl(d *ast.FuncDecl, origPkgName string) (name string, rewritten *ast.FuncDecl) {
+func getFuncDeclName(d *ast.FuncDecl, origPkgName string) string {
+	var name string
+
+	if d.Recv != nil {
+		switch r := d.Recv.List[0].Type.(type) {
+		case *ast.StarExpr:
+			name = "*" + r.X.(*ast.Ident).Name + "." + d.Name.Name
+		case *ast.Ident:
+			name = r.Name + "." + d.Name.Name
+		}
+	} else {
+		name = d.Name.Name
+	}
+
+	return name
+}
+
+func rewriteFuncDecl(d *ast.FuncDecl, origPkgName string) *ast.FuncDecl {
 	if d.Recv != nil {
 		var l []*ast.Field
 		rcv := d.Recv.List[0]
 		switch r := rcv.Type.(type) {
 		case *ast.StarExpr:
-			name = "*" + r.X.(*ast.Ident).Name + "." + d.Name.Name
 			rcv.Type = &ast.StarExpr{X: &ast.SelectorExpr{
 				X:   ast.NewIdent(origPkgName),
 				Sel: r.X.(*ast.Ident),
 			}}
 		case *ast.Ident:
-			name = r.Name + "." + d.Name.Name
 			rcv.Type = &ast.SelectorExpr{
 				X:   ast.NewIdent(origPkgName),
 				Sel: r,
@@ -153,11 +169,9 @@ func rewriteFuncDecl(d *ast.FuncDecl, origPkgName string) (name string, rewritte
 		l = append(l, d.Type.Params.List...)
 		d.Type.Params.List = l
 		d.Recv = nil
-	} else {
-		name = d.Name.Name
 	}
 
-	return name, d
+	return d
 }
 
 func compileNewFile(pkgPath, filename string, contents []byte, changedLines map[int]bool) (string, error) {
@@ -175,10 +189,30 @@ func compileNewFile(pkgPath, filename string, contents []byte, changedLines map[
 		return "", err
 	}
 
+	var mockBody []ast.Stmt
 	var imports []ast.Decl
 	var haveHot bool
 
 	for idx, d := range f.Decls {
+		if d, ok := d.(*ast.FuncDecl); ok {
+			// hot.ResetByName(package)
+			mockBody = append(mockBody, &ast.ExprStmt{
+				X: &ast.CallExpr{
+					Fun: &ast.SelectorExpr{
+						Sel: ast.NewIdent("ResetByName"),
+						X:   ast.NewIdent("hot"),
+					},
+					Args: []ast.Expr{
+						&ast.BasicLit{
+							Kind:  token.STRING,
+							Value: fmt.Sprintf("%q", pkgPath+"/"+getFuncDeclName(d, origPkgName)),
+						},
+					},
+				},
+			})
+			continue
+		}
+
 		gen, ok := d.(*ast.GenDecl)
 		if !ok || gen.Tok != token.IMPORT {
 			continue
@@ -216,14 +250,13 @@ func compileNewFile(pkgPath, filename string, contents []byte, changedLines map[
 	f.Decls = nil
 	f.Decls = append(f.Decls, imports...)
 
-	var list []ast.Stmt
-
 	for _, d := range decls {
-		name, fun := rewriteFuncDecl(d, origPkgName)
+		name := getFuncDeclName(d, origPkgName)
+		fun := rewriteFuncDecl(d, origPkgName)
 		f.Decls = append(f.Decls, fun)
 
 		// hot.MockByName(package, function)
-		list = append(list, &ast.ExprStmt{
+		mockBody = append(mockBody, &ast.ExprStmt{
 			X: &ast.CallExpr{
 				Fun: &ast.SelectorExpr{
 					Sel: ast.NewIdent("MockByName"),
@@ -240,13 +273,25 @@ func compileNewFile(pkgPath, filename string, contents []byte, changedLines map[
 		})
 	}
 
+	mockBody = append(mockBody, &ast.ExprStmt{
+		X: &ast.CallExpr{
+			Fun: ast.NewIdent("println"),
+			Args: []ast.Expr{
+				&ast.BasicLit{
+					Kind:  token.STRING,
+					Value: fmt.Sprintf("%q", fmt.Sprintf("new plugin loaded at %s (%d)", time.Now(), time.Now().UnixNano())),
+				},
+			},
+		},
+	})
+
 	f.Decls = append(f.Decls, &ast.FuncDecl{
 		Name: ast.NewIdent("Mock"),
 		Type: &ast.FuncType{
 			Params: &ast.FieldList{},
 		},
 		Body: &ast.BlockStmt{
-			List: list,
+			List: mockBody,
 		},
 	})
 
@@ -268,7 +313,7 @@ func compileNewFile(pkgPath, filename string, contents []byte, changedLines map[
 
 	liveDir := softGopath + "/src/live"
 	liveFile := liveDir + "/main.go"
-	plugPath := liveDir + "/plug" + fmt.Sprint(time.Now().UnixNano()) + ".so"
+	plugPath := liveDir + "/plug" + fmt.Sprint(time.Now().UnixNano()+rand.Int63()) + ".so"
 
 	os.RemoveAll(liveDir)
 	if err := os.MkdirAll(liveDir, 0777); err != nil {

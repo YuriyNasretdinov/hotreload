@@ -34,5 +34,6 @@ func ReloaderLoop() {
 
 		log.Printf("Calling Mock() from a plugin")
 		sym.(func())()
+		log.Printf("Hot reload was successful")
 	}
 }
