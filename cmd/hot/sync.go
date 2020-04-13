@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func statsEqual(a, b os.FileInfo) bool {
@@ -54,15 +55,17 @@ func sync(fi os.FileInfo, dirFrom, dirTo string) {
 		return
 	}
 
+	oldContents, err := ioutil.ReadFile(from)
+	if err != nil {
+		log.Printf("Could not read %s: %s", from, err.Error())
+		return
+	}
+
 	newContents, err := rewriteFile(from)
 	if err != nil {
 		log.Printf("Could not rewrite file %s: %s", from, err.Error())
 		os.Stderr.Write([]byte("\n"))
-		newContents, err = ioutil.ReadFile(from)
-		if err != nil {
-			log.Printf("Could not read %s: %s", from, err.Error())
-			return
-		}
+		newContents = oldContents
 	}
 
 	err = ioutil.WriteFile(to, newContents, fi.Mode().Perm())
@@ -74,6 +77,20 @@ func sync(fi os.FileInfo, dirFrom, dirTo string) {
 	err = os.Chtimes(to, fi.ModTime(), fi.ModTime())
 	if err != nil {
 		log.Printf("Could not chtimes %s: %s", to, err.Error())
+		return
+	}
+
+	origPath := to + ".orig"
+
+	err = ioutil.WriteFile(origPath, oldContents, fi.Mode().Perm())
+	if err != nil {
+		log.Printf("Could not write %s: %s", origPath, err.Error())
+		return
+	}
+
+	err = os.Chtimes(origPath, fi.ModTime(), fi.ModTime())
+	if err != nil {
+		log.Printf("Could not chtimes %s: %s", origPath, err.Error())
 		return
 	}
 }
@@ -147,6 +164,11 @@ func syncDir(dirFrom, dirTo string) {
 
 	for name := range toMap {
 		if _, ok := fromMap[name]; ok {
+			continue
+		}
+
+		// don't remove original ("backup") files if the source file still exists
+		if _, ok := fromMap[strings.TrimSuffix(name, ".orig")]; ok {
 			continue
 		}
 

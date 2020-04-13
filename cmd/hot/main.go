@@ -1,21 +1,29 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
 
 var (
+	watchDir = flag.String("watch", "", "Which directory to watch for changes to do live reload")
+
 	gopath     = os.Getenv("GOPATH")
 	softDir    = filepath.Join(gopath, "soft")
 	softGopath = filepath.Join(softDir, "p")
 )
 
 func main() {
+	flag.Parse()
+
+	if *watchDir == "" {
+		log.Fatal("Must specify watch dir")
+	}
+
 	if gopath == "" {
 		log.Fatal("GOPATH must be set")
 	}
@@ -35,12 +43,25 @@ func main() {
 		os.Chdir(newDir)
 	}
 
-	ex, err := exec.LookPath(os.Args[1])
-	if err != nil {
-		log.Fatalf("Could not find executable for %s: %s", os.Args[1], err.Error())
+	args := flag.Args()
+
+	var cmd *exec.Cmd
+	if len(args) > 1 {
+		cmd = exec.Command(args[0], args[1:]...)
+	} else {
+		cmd = exec.Command(args[0])
 	}
 
-	log.Printf("Running %s %v", ex, os.Args[1:])
+	cmd.Env = os.Environ()
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 
-	syscall.Exec(ex, os.Args[1:], os.Environ())
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		log.Printf("Couldn't open stdin pipe: %v", err)
+	}
+
+	go watchChanges(gopath, *watchDir, stdin)
+
+	log.Fatal(cmd.Run())
 }
