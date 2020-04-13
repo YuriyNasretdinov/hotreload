@@ -61,7 +61,7 @@ func main() {
 		log.Printf("Couldn't open stdin pipe: %v", err)
 	}
 
-	go watchChanges(gopath, *watchDir, stdin)
+	go watchChanges(stdin)
 
 	log.Fatal(cmd.Run())
 }
