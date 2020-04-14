@@ -17,7 +17,6 @@ func Mock(src interface{}, dst interface{}) {
 }
 
 func mock(fHash funcPtr, dst interface{}) {
-
 	fl, ok := pkgFlags[fHash]
 	if !ok {
 		panic("Function cannot be mocked, it is not registered")
@@ -27,7 +26,24 @@ func mock(fHash funcPtr, dst interface{}) {
 		panic("Function signatures do not match")
 	}
 
-	atomic.StoreInt32((*int32)(fl), 1)
+	setFlag(fl, true)
+
+	// There can be some point in time when the flag is set
+	// but the mock does not yet exist.
+	//
+	// Also, when we delete the mock there can be brief period of time
+	// when mock does not exist but the function already checked the flag
+	// and tries to execute the mock anyway.
+	//
+	// This is why the rewritten code basically looks like this:
+	//
+	// if atomic.LoadInt32(<flag for the specific function>) != 0 {
+	//   // <--- the mock can be deleted from the table at this point in time
+	//   if soft := hot.GetMockFor(<function pointer>); soft != nil {
+	//	   <execute the mock>
+	//     return
+	//   }
+	// }
 
 	mocksMutex.Lock()
 	defer mocksMutex.Unlock()
@@ -112,8 +128,27 @@ func reset(fHash funcPtr) {
 		return
 	}
 
-	delete(mocks, fHash)
+	// The order doesn't really matter here as the flag is just a hint
+	// that the function is mocked and that it's required to check the
+	// mocks table whether or not there is an actual mock for it or not.
+	//
+	// Even if we set the flag to false in before deleting it from the
+	// mocks map the actual code that is executed can check for the flag
+	// (and see that it's true), then get descheduled and then return
+	// to the execution much later and try to get the mock that no longer
+	// exists.
+	//
+	// So in the interceptor code there are two checks:
+	//  1. Check that the flag is true
+	//  2. Get the mock while holding the mutex and check once
+	//     again that it's still there.
+
 	setFlag(fl, false)
+
+	mocksMutex.Lock()
+	defer mocksMutex.Unlock()
+
+	delete(mocks, fHash)
 }
 
 // Reset removes the mock that was set up for the function f,

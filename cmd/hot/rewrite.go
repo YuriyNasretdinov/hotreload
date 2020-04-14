@@ -95,7 +95,12 @@ func funcDeclFlagName(fset *token.FileSet, d *ast.FuncDecl) string {
 // checks if we have situation like "func (file *file) close() error" in "os" package
 // TODO: we can actually rename arguments when this happens so there is no ambiguity
 func typesClashWithArgNames(decls []*ast.Field) bool {
-	namesMap := make(map[string]bool)
+	// there also are some predefined names, such as "soft" and "hot" that can't be
+	// used as variables inside the function without causing problems.
+	namesMap := map[string]bool{
+		"hot":  true,
+		"soft": true,
+	}
 	for _, d := range decls {
 		for _, n := range d.Names {
 			namesMap[n.Name] = true
@@ -223,7 +228,7 @@ func addInit(hashes funcFlags, initFunc *ast.FuncDecl, fset *token.FileSet, f *a
 	})
 }
 
-func getInterceptorsExpression(decl *ast.FuncDecl) ast.Expr {
+func getInterceptor(decl *ast.FuncDecl, haveReturn bool) *ast.IfStmt {
 	funcType := funcDeclType(decl)
 	if funcType == nil {
 		return nil
@@ -234,40 +239,62 @@ func getInterceptorsExpression(decl *ast.FuncDecl) ast.Expr {
 		return nil
 	}
 
-	expr := &ast.CallExpr{
+	// if soft := hot.GetMockFor(<function pointer>); soft != nil {
+	//   return soft.(func(...) ...)(<args>)
+	//     -or-
+	//   soft.(func(...) ...)(<args>)
+	//   return
+	// }
+
+	getMockExpr := &ast.CallExpr{
+		Fun: &ast.SelectorExpr{
+			X:   ast.NewIdent("hot"),
+			Sel: ast.NewIdent("GetMockFor"),
+		},
+		Args: []ast.Expr{funcDeclExpr(decl)},
+	}
+
+	callExpr := &ast.CallExpr{
 		Fun: &ast.TypeAssertExpr{
-			X: &ast.CallExpr{
-				Fun: &ast.SelectorExpr{
-					X:   ast.NewIdent("hot"),
-					Sel: ast.NewIdent("GetMockFor"),
-				},
-				Args: []ast.Expr{funcDeclExpr(decl)},
-			},
+			X:    getMockExpr,
 			Type: funcType,
 		},
 		Args: args,
 	}
 
 	if haveEllipsis {
-		expr.Ellipsis = 1
+		callExpr.Ellipsis = 1
 	}
 
-	return expr
+	var bodyStmts []ast.Stmt
+
+	if haveReturn {
+		bodyStmts = append(bodyStmts, &ast.ReturnStmt{Results: []ast.Expr{callExpr}})
+	} else {
+		bodyStmts = append(bodyStmts, &ast.ExprStmt{X: callExpr}, &ast.ReturnStmt{})
+	}
+
+	return &ast.IfStmt{
+		Init: &ast.AssignStmt{
+			Tok: token.DEFINE,
+			Lhs: []ast.Expr{ast.NewIdent("soft")},
+			Rhs: []ast.Expr{getMockExpr},
+		},
+		Cond: &ast.BinaryExpr{
+			Op: token.NEQ,
+			X:  ast.NewIdent("soft"),
+			Y:  ast.NewIdent("nil"),
+		},
+		Body: &ast.BlockStmt{List: bodyStmts},
+	}
 }
 
 func injectInterceptors(flags funcFlags) {
 	for decl, flagMeta := range flags {
-		var injectBody []ast.Stmt
-		interceptorsExpr := getInterceptorsExpression(decl)
-		if interceptorsExpr == nil {
+		interceptor := getInterceptor(decl, decl.Type.Results != nil)
+		if interceptor == nil {
 			delete(flags, decl)
 			continue
-		}
-
-		if decl.Type.Results != nil {
-			injectBody = append(injectBody, &ast.ReturnStmt{Results: []ast.Expr{interceptorsExpr}})
-		} else {
-			injectBody = append(injectBody, &ast.ExprStmt{X: interceptorsExpr}, &ast.ReturnStmt{})
 		}
 
 		newList := make([]ast.Stmt, 0, len(decl.Body.List)+1)
@@ -289,7 +316,7 @@ func injectInterceptors(flags funcFlags) {
 					Value: "0",
 				},
 			},
-			Body: &ast.BlockStmt{List: injectBody},
+			Body: &ast.BlockStmt{List: []ast.Stmt{interceptor}},
 		})
 		newList = append(newList, decl.Body.List...)
 		decl.Body.List = newList
